@@ -38,7 +38,7 @@ def main():
         server.listen()
         print(f"[*] Server is listening on {IP}:{PORT}")
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"[!] Error: {e}", file=sys.stderr)
         exit(1)
     while True:
         try:
@@ -57,7 +57,7 @@ def main():
             server.close()
             return
         except Exception as e:
-            print(f"Error:s {e}", file=sys.stderr)
+            print(f"[!] Error:s {e}", file=sys.stderr)
             exit(1)
 
 

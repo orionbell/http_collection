@@ -36,6 +36,8 @@ void *get(Queue *queue) {
   return val;
 }
 void queue_destroy(Queue *queue) {
+  if (queue == NULL)
+    return;
   Item *head = queue->head;
   for (int i = 0; i < queue->length; i++) {
     queue->head = head->next;

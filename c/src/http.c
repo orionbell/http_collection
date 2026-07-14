@@ -1,6 +1,7 @@
 #include "../include/http.h"
 #include "../include/queue.h"
 #include <arpa/inet.h>
+#include <asm-generic/socket.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -29,10 +30,70 @@ void handle_ctrlc(int n) {
   printf(" SIGKILL detected, exiting ...\n");
 }
 
-char *read_request(int clientfd);
-char **parse_request();
+unsigned int read_request(int clientfd, char **req_buf) {
+  char *buffer = malloc(CHUNK_SIZE);
+  char chunk[CHUNK_SIZE];
+  int buffer_len = 0, chunk_len = 0;
+  while ((chunk_len = read(clientfd, chunk, CHUNK_SIZE)) > 0) {
+    if (chunk_len == CHUNK_SIZE) {
+      buffer = realloc(buffer, sizeof(buffer) + CHUNK_SIZE);
+    }
+    memcpy(buffer + buffer_len, chunk, chunk_len);
+    buffer_len += chunk_len;
+    if (strstr(buffer, "\r\n\r\n") != NULL)
+      break;
+  }
+  if (chunk_len < 0) {
+    perror("[!] Failed to read from socket, error");
+    req_buf = NULL;
+    return -1;
+  }
+  *req_buf = buffer;
+  return buffer_len;
+}
+void parse_request(HTTPMethod *method, char **path) {
+  *method = GET;
+  *path = "/\0";
+};
 
-void handle_client(int clientfd);
+void handle_client(int clientfd) {
+  char *req_buf;
+  HTTPMethod method;
+  char *path;
+  char *method_str;
+  int buffer_len = read_request(clientfd, &req_buf);
+  printf("%s\n%d\n", req_buf,
+         buffer_len); // No Null Byte at the end of the string
+  parse_request(&method, &path);
+  switch (method) {
+  case GET:
+    method_str = "GET";
+    break;
+  case POST:
+    method_str = "POST";
+    break;
+  case PUT:
+    method_str = "PUT";
+    break;
+  case DELETE:
+    method_str = "DELETE";
+    break;
+  case OPTIONS:
+    method_str = "OPTIONS";
+    break;
+  case HEAD:
+    method_str = "HEAD";
+    break;
+  case PATCH:
+    method_str = "PATCH";
+    break;
+  case TRACE:
+    method_str = "TRACE";
+    break;
+  }
+  printf("[+] Request: %s %s\n", method_str, path);
+  fflush(stdout);
+}
 
 void *execute(void *arg) {
   HTTPServer *server = (HTTPServer *)arg;
@@ -41,9 +102,10 @@ void *execute(void *arg) {
   while (1) {
     pthread_mutex_lock(&mutex);
     if (server->clients->length > 0) {
-      void *client = get(((HTTPServer *)server)->clients);
+      int *clientfd = (int *)get(((HTTPServer *)server)->clients);
+      handle_client(*clientfd);
     }
-    if (alive) {
+    if (!alive) {
       pthread_mutex_unlock(&mutex);
       break;
     }
@@ -101,6 +163,13 @@ int server_listen(HTTPServer *server) {
   server->sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (server->sockfd == -1) {
     perror("[!] Failed to create socket, error");
+    return 1;
+  }
+  if (setsockopt(server->sockfd, SOL_SOCKET, SO_REUSEADDR, &(int){1},
+                 sizeof(int)) < 0 ||
+      setsockopt(server->sockfd, SOL_SOCKET, SO_REUSEPORT, &(int){1},
+                 sizeof(int)) < 0) {
+    perror("[!] Failed to configure socket, error");
     return 1;
   }
   int flags = fcntl(server->sockfd, F_GETFL, 0);

@@ -18,6 +18,17 @@ typedef struct {
   uint8_t workers_count;
 } HTTPServer;
 
+typedef enum {
+  GET,
+  POST,
+  DELETE,
+  PUT,
+  OPTIONS,
+  PATCH,
+  HEAD,
+  TRACE,
+} HTTPMethod;
+
 HTTPServer *server_create(int argc, char *argv[]);
 int use_cli_args(HTTPServer *server);
 int server_listen(HTTPServer *server);

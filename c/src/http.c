@@ -19,6 +19,9 @@
 #define DEFAULT_PORT 8080
 #define DEFAULT_TH_COUNT 32
 #define CHUNK_SIZE 1024
+#define ROUTES_ARR_SIZE 8
+#define DEFAULT_RES_HEADERS_LEN 1024
+bool is_listing = false;
 
 pthread_mutex_t mutex;
 bool alive = true;
@@ -29,7 +32,6 @@ void handle_ctrlc(int n) {
   pthread_mutex_unlock(&mutex);
   printf(" SIGKILL detected, exiting ...\n");
 }
-
 unsigned int read_request(int clientfd, char **req_buf) {
   char *buffer = malloc(CHUNK_SIZE);
   char chunk[CHUNK_SIZE];
@@ -51,20 +53,33 @@ unsigned int read_request(int clientfd, char **req_buf) {
   *req_buf = buffer;
   return buffer_len;
 }
-void parse_request(HTTPMethod *method, char **path) {
-  *method = GET;
-  *path = "/\0";
+void parse_request(char **req_buf, HTTPMethod *method, char **path) {
+  char *method_str = strtok(*req_buf, " ");
+  *path = strtok(NULL, " ");
+  if (strcmp(method_str, "GET") == 0)
+    *method = GET;
+  else if (strcmp(method_str, "POST") == 0)
+    *method = POST;
+  else if (strcmp(method_str, "PUT") == 0)
+    *method = PUT;
+  else if (strcmp(method_str, "DELETE") == 0)
+    *method = DELETE;
+  else if (strcmp(method_str, "HEAD") == 0)
+    *method = HEAD;
+  else if (strcmp(method_str, "HEAD") == 0)
+    *method = OPTIONS;
+  else if (strcmp(method_str, "TRACE") == 0)
+    *method = TRACE;
+  else if (strcmp(method_str, "PATCH") == 0)
+    *method = PATCH;
 };
-
-void handle_client(int clientfd) {
+void handle_client(HTTPServer *server, int clientfd) {
   char *req_buf;
   HTTPMethod method;
   char *path;
   char *method_str;
-  int buffer_len = read_request(clientfd, &req_buf);
-  printf("%s\n%d\n", req_buf,
-         buffer_len); // No Null Byte at the end of the string
-  parse_request(&method, &path);
+  read_request(clientfd, &req_buf);
+  parse_request(&req_buf, &method, &path);
   switch (method) {
   case GET:
     method_str = "GET";
@@ -92,9 +107,48 @@ void handle_client(int clientfd) {
     break;
   }
   printf("[+] Request: %s %s\n", method_str, path);
-  fflush(stdout);
+  char *html;
+  for (int i = 0; i < server->routes_count; i++) {
+    if (strcmp(server->routes[i].path, path) == 0 &&
+        server->routes[i].method == method) {
+      switch (server->routes[i].actionType) {
+      case SRC_FILE: {
+        FILE *src = fopen(server->routes[i].action, "w");
+        html = "<h1>Hi mom!</h1>\n";
+        char res[DEFAULT_RES_HEADERS_LEN + strlen(html) + 4];
+        sprintf(res,
+                "HTTP/1.1 200 OK\r\nContent-length: %d\r\nContent-Type: "
+                "text/html\r\n\r\n%s\r\n",
+                (int)strlen(html), html);
+        if (send(clientfd, res, strlen(res), 0) < 0)
+          perror("[!] Failed to send response, error");
+        close(clientfd);
+        return;
+      }
+      case FUNCTION:
+        html = "<h1>Hi mom!</h1>\n";
+        char res[DEFAULT_RES_HEADERS_LEN + strlen(html) + 4];
+        sprintf(res,
+                "HTTP/1.1 200 OK\r\nContent-length: %d\r\nContent-Type: "
+                "text/html\r\n\r\n%s\r\n",
+                (int)strlen(html), html);
+        if (send(clientfd, res, strlen(res), 0) < 0)
+          perror("[!] Failed to send response, error");
+        close(clientfd);
+        return;
+      }
+    }
+  }
+  char *not_found_res = "HTTP/1.1 404 Not Found\r\n";
+  if (send(clientfd, not_found_res, strlen(not_found_res), 0) < 0) {
+    perror("[!] Failed to send response, error");
+    close(clientfd);
+    return;
+  }
+  printf("[+] Route %s %s not found\n", method_str, path);
+  close(clientfd);
+  return;
 }
-
 void *execute(void *arg) {
   HTTPServer *server = (HTTPServer *)arg;
   if (server == NULL)
@@ -103,7 +157,7 @@ void *execute(void *arg) {
     pthread_mutex_lock(&mutex);
     if (server->clients->length > 0) {
       int *clientfd = (int *)get(((HTTPServer *)server)->clients);
-      handle_client(*clientfd);
+      handle_client(server, *clientfd);
     }
     if (!alive) {
       pthread_mutex_unlock(&mutex);
@@ -113,16 +167,19 @@ void *execute(void *arg) {
   }
   return NULL;
 }
-
 HTTPServer *server_create(int argc, char *argv[]) {
   HTTPServer *server = (HTTPServer *)malloc(sizeof(HTTPServer));
   pthread_mutex_init(&mutex, NULL);
   signal(SIGINT, handle_ctrlc);
-  if (server == NULL)
+  if (server == NULL) {
+    perror("Memory error");
     return NULL;
+  }
   server->addr = malloc(sizeof(struct sockaddr_in));
-  if (server->addr == NULL)
+  if (server->addr == NULL) {
+    perror("Memory error");
     return NULL;
+  }
   memset(server->addr, 0, sizeof(struct sockaddr_in));
   server->addr->sin_family = AF_INET;
   if (inet_aton(DEFAULT_ADDR, &server->addr->sin_addr) != 1) {
@@ -146,6 +203,13 @@ HTTPServer *server_create(int argc, char *argv[]) {
               argv[1], DEFAULT_ADDR);
     }
   }
+  server->routes = malloc(sizeof(Route) * ROUTES_ARR_SIZE);
+  if (server->routes == NULL) {
+    perror("Memory error");
+    return NULL;
+  }
+  server->routes_count = 0;
+  server->routes_cap = ROUTES_ARR_SIZE;
   server->sockfd = 0;
   server->workers_count = 0;
   if (argc >= 4)
@@ -193,6 +257,7 @@ int server_listen(HTTPServer *server) {
          inet_ntoa(server->addr->sin_addr), ntohs(server->addr->sin_port));
   struct sockaddr_in client_addr;
   socklen_t client_addr_len;
+  is_listing = true;
   while (1) {
     int clientfd;
     if ((clientfd = accept(server->sockfd, (struct sockaddr *)&client_addr,
@@ -225,5 +290,23 @@ void server_destroy(HTTPServer *server) {
     return;
   queue_destroy(server->clients);
   pthread_mutex_destroy(&mutex);
+  free(server->routes);
   free(server);
+}
+int define_route(HTTPServer *server, Route route) {
+  if (is_listing)
+    return 0;
+  if (server == NULL)
+    return 0;
+  if (server->routes_count >= server->routes_cap) {
+    if ((server->routes = realloc(
+             server->routes, server->routes_cap + ROUTES_ARR_SIZE)) == NULL) {
+      perror("Memory error");
+      return 0;
+    }
+    server->routes_cap += ROUTES_ARR_SIZE;
+  }
+  server->routes[server->routes_count] = route;
+  server->routes_count++;
+  return 1;
 }

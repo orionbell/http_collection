@@ -10,13 +10,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-typedef struct {
-  Queue *clients;
-  pthread_t *workers;
-  struct sockaddr_in *addr;
-  int sockfd;
-  uint8_t workers_count;
-} HTTPServer;
+typedef enum {
+  SRC_FILE,
+  FUNCTION,
+} RouteAction;
 
 typedef enum {
   GET,
@@ -29,9 +26,26 @@ typedef enum {
   TRACE,
 } HTTPMethod;
 
+typedef struct {
+  HTTPMethod method;
+  char *path;
+  RouteAction actionType;
+  void *action;
+} Route;
+
+typedef struct {
+  Queue *clients;
+  pthread_t *workers;
+  struct sockaddr_in *addr;
+  int sockfd;
+  uint8_t workers_count;
+  Route *routes;
+  uint32_t routes_count;
+  uint32_t routes_cap;
+} HTTPServer;
+
 HTTPServer *server_create(int argc, char *argv[]);
-int use_cli_args(HTTPServer *server);
 int server_listen(HTTPServer *server);
 void server_destroy(HTTPServer *server);
-
+int define_route(HTTPServer *server, Route route);
 #endif // __HTTP_H_

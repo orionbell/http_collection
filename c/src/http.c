@@ -20,11 +20,39 @@
 #define DEFAULT_TH_COUNT 32
 #define CHUNK_SIZE 1024
 #define ROUTES_ARR_SIZE 8
-#define DEFAULT_RES_HEADERS_LEN 1024
+#define DEFAULT_RES_HEADERS_LEN                                                \
+  strlen("HTTP/1.1 200 OK\r\nContent-length: %d\r\nContent-Type: "             \
+         "text/html\r\nConnection: close\r\n\r\n")
 bool is_listing = false;
 
 pthread_mutex_t mutex;
 bool alive = true;
+
+unsigned int read_file(const char *filename, char **buffer) {
+  FILE *file = fopen(filename, "r");
+  if (file == NULL) {
+    perror("[!] Failed to open file, error");
+    return -1;
+  }
+  *buffer = malloc(CHUNK_SIZE + 1); // + 1 for the null character
+  char *content = *buffer;
+  if (content == NULL) {
+    perror("[!] Memory error");
+    return -1;
+  }
+  unsigned int i;
+  for (i = 0; (content[i] = fgetc(file)) != EOF; i++) {
+    if (i % CHUNK_SIZE == 0) {
+      content = realloc(content, CHUNK_SIZE);
+      if (content == NULL) {
+        perror("[!] Memory error");
+        return -1;
+      }
+    }
+  }
+  fclose(file);
+  return i;
+}
 
 void handle_ctrlc(int n) {
   pthread_mutex_lock(&mutex);
@@ -108,33 +136,26 @@ void handle_client(HTTPServer *server, int clientfd) {
   }
   printf("[+] Request: %s %s\n", method_str, path);
   char *html;
+  unsigned int length = 0;
   for (int i = 0; i < server->routes_count; i++) {
     if (strcmp(server->routes[i].path, path) == 0 &&
         server->routes[i].method == method) {
-      switch (server->routes[i].actionType) {
-      case SRC_FILE: {
-        FILE *src = fopen(server->routes[i].action, "w");
-        html = "<h1>Hi mom!</h1>\n";
-        char res[DEFAULT_RES_HEADERS_LEN + strlen(html) + 4];
-        sprintf(res,
-                "HTTP/1.1 200 OK\r\nContent-length: %d\r\nContent-Type: "
-                "text/html\r\n\r\n%s\r\n",
-                (int)strlen(html), html);
+      if (server->routes[i].actionType == SRC_FILE ||
+          server->routes[i].actionType == FUNCTION) {
+        if (server->routes[i].actionType == SRC_FILE)
+          length = read_file(server->routes[i].action, &html);
+        else
+          length = ((unsigned int (*)(char **))server->routes[i].action)(&html);
+        char *res = malloc(DEFAULT_RES_HEADERS_LEN + length + 4);
+        snprintf(res, DEFAULT_RES_HEADERS_LEN + length + 4,
+                 "HTTP/1.1 200 OK\r\nContent-length: %d\r\nContent-Type: "
+                 "text/html\r\nConnection: close\r\n\r\n%.*s\r\n",
+                 length, length, html);
         if (send(clientfd, res, strlen(res), 0) < 0)
           perror("[!] Failed to send response, error");
         close(clientfd);
-        return;
-      }
-      case FUNCTION:
-        html = "<h1>Hi mom!</h1>\n";
-        char res[DEFAULT_RES_HEADERS_LEN + strlen(html) + 4];
-        sprintf(res,
-                "HTTP/1.1 200 OK\r\nContent-length: %d\r\nContent-Type: "
-                "text/html\r\n\r\n%s\r\n",
-                (int)strlen(html), html);
-        if (send(clientfd, res, strlen(res), 0) < 0)
-          perror("[!] Failed to send response, error");
-        close(clientfd);
+        free(req_buf);
+        free(res);
         return;
       }
     }
@@ -142,11 +163,11 @@ void handle_client(HTTPServer *server, int clientfd) {
   char *not_found_res = "HTTP/1.1 404 Not Found\r\n";
   if (send(clientfd, not_found_res, strlen(not_found_res), 0) < 0) {
     perror("[!] Failed to send response, error");
-    close(clientfd);
-    return;
+  } else {
+    printf("[+] Route %s %s not found\n", method_str, path);
   }
-  printf("[+] Route %s %s not found\n", method_str, path);
   close(clientfd);
+  free(req_buf);
   return;
 }
 void *execute(void *arg) {
@@ -305,6 +326,14 @@ int define_route(HTTPServer *server, Route route) {
       return 0;
     }
     server->routes_cap += ROUTES_ARR_SIZE;
+  }
+  if (route.actionType == SRC_FILE) {
+    FILE *file = fopen(route.action, "r");
+    if (file == NULL) {
+      perror("Failed to open file, error");
+      return 0;
+    }
+    fclose(file);
   }
   server->routes[server->routes_count] = route;
   server->routes_count++;

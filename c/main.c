@@ -8,9 +8,11 @@ int main(int argc, char *argv[]) {
       .path = "/",
       .actionType = SRC_FILE,
       .method = GET,
-      .action = "index.html",
+      .action = "../../public/index.html",
   };
-  define_route(server, root);
+  if (define_route(server, root) == 0) {
+    return EXIT_FAILURE;
+  }
   if (server_listen(server)) {
     fprintf(stderr, "[!] Error: Listining failed\n");
     server_destroy(server);

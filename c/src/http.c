@@ -2,9 +2,7 @@
 #include "../include/queue.h"
 #include <arpa/inet.h>
 #include <asm-generic/socket.h>
-#include <ctype.h>
 #include <fcntl.h>
-#include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
@@ -209,7 +207,7 @@ HTTPServer *server_create(int argc, char *argv[]) {
   }
   server->addr->sin_port = htons(DEFAULT_PORT);
   if (argc >= 2) {
-    if (argc >= 3 && isdigit(argv[2]) && atoi(argv[2]) > 0) {
+    if (argc >= 3 && atoi(argv[2]) > 0) {
       server->addr->sin_port = htons(atoi(argv[2]));
     } else {
       if (argc > 3) {
